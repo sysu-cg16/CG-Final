@@ -1,0 +1,1 @@
+解压 `CGFinal.rar` 后直接运行 `CGFinalProject.exe` 即可。
