@@ -15,19 +15,29 @@
 #include <iostream>
 
 #include <stb_image.h>
-#include "character.h"
+#include "sceneController.h"
+#include "skyBox.h"
+
+#include "ogldev_util.h"
+
+//#define IMGUI_TEST
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 void mouse_callback(GLFWwindow* window, double xpos, double ypos);
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset);
 void processInput(GLFWwindow *window);
 
-// settings
-const unsigned int SCR_WIDTH = 600*2;
-const unsigned int SCR_HEIGHT = 600*2;
+void changePlanePos();
+void changePlaneInitAng(float xoffset, float yoffset, bool reset = false);
+void showGui();
+void getDepthMap(Shader &depthShader, float &currentFrame, glm::mat4 &lightSpaceMatrix);
+void showScence(Shader &shader, float &currentFrame, glm::mat4 &lightSpaceMatrix);
+void showParticle(Shader &shader);
+void showDepthMap(Shader &debugDepthQuad);
+void renderQuad();
 
 // camera
-Camera camera(glm::vec3(0.0f, 0.0f, 3.0f));
+Camera camera(glm::vec3(0.0f, 50.0f, 0.0f));
 float lastX = SCR_WIDTH / 2.0f;
 float lastY = SCR_HEIGHT / 2.0f;
 bool firstMouse = true;
@@ -38,7 +48,27 @@ float deltaTime = 0.0f;
 float lastFrame = 0.0f;
 
 // lighting
-float lightDir[] = { 0.0f, -0.3f, 0.0f };
+float lightPos[] = { 32.0f, 423.0f, 285.0f };
+float lightPan = 800;
+
+//float lightPos[] = { 57.0f, 262.0f, 141.0f };
+//float lightPan = 550;
+
+float defaultViewPlaneInitAng[] = { 35.f, 0.0f, 0.0f };
+glm::vec3 viewPlaneInitAng(defaultViewPlaneInitAng[0], defaultViewPlaneInitAng[1], defaultViewPlaneInitAng[2]);
+
+// gamma
+bool gammaEnabled = false;
+bool gammaKeyPressed = false;
+
+// depth test
+bool isDepthTest = false;
+bool depthTestKeyPressed = false;
+
+//粒子发射器
+ParticleGenerator   *Particles;
+
+SceneController sceneController;
 
 int main()
 {
@@ -48,6 +78,7 @@ int main()
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+	glfwWindowHint(GLFW_SAMPLES, 4);
 
 	// glfw window creation
 	// --------------------
@@ -74,28 +105,31 @@ int main()
 		std::cout << "Failed to initialize GLAD" << std::endl;
 		return -1;
 	}
-	vector<Character*> allCharacters;
+
 	// configure global opengl state
 	// -----------------------------
 	glEnable(GL_DEPTH_TEST);
-
+	glEnable(GL_MULTISAMPLE);
+	glEnable(GL_CULL_FACE);
+	// 文字开启混合
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  
 	// build and compile our shader zprogram
 	// ------------------------------------
 	Shader shader("animatedModel.vs", "animatedModel.fs");
-	camera.MovementSpeed = 300.0f;
+	Shader depthShader("shadow_mapping_depth.vs", "shadow_mapping_depth.fs");
+	Shader debugDepthQuad("debug_shadow_mapping.vs", "debug_shadow_mapping.fs");
+	Shader particleShader("particle.vs", "particle.fs");
 
-	// now 
-	/*Character now_map("resources/now_map.fbx", glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(20.0f, 20.0f, 20.0f), glm::vec3(0.0f, 0.0f, 0.0f));
-	Character now_upper_half("resources/now_upper_half_v1.fbx", glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(8.0f, 8.0f, 8.0f), glm::vec3(-90.0f, 0.0f, 0.0f));
-	Character now_lower_half("resources/now_lower_half_v1.fbx", glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(4.0f, 4.0f, 4.0f), glm::vec3(0.0f, 180.0f, 0.0f));
+	//粒子发射器
+	Particles = new ParticleGenerator(
+		particleShader,
+		loadTexture("resources/particle.png"),
+		500
+	);
 
-	allCharacters.push_back(&now_map);
-	allCharacters.push_back(&now_upper_half);
-	allCharacters.push_back(&now_lower_half);*/
-
-	Character past_map("resources/past_map.fbx");
-	allCharacters.push_back(&past_map);
-
+	
 	// Setup Dear ImGui context
 	// ------------------------------
 	IMGUI_CHECKVERSION();
@@ -112,66 +146,72 @@ int main()
 	ImGui_ImplGlfw_InitForOpenGL(window, true);
 	ImGui_ImplOpenGL3_Init("#version 130");
 
+	// init variable
+	// ------------------------------
+	camera.MovementSpeed = 100.0f;
+	sceneController.init();
+	SkyBox skyBox(&camera);
+	skyBox.init();
+
 	// render loop
 	// -----------
 	while (!glfwWindowShouldClose(window))
 	{
+		glfwGetWindowSize(window, (int*)&SCR_WIDTH, (int*)&SCR_HEIGHT);
 		// per-frame time logic
 		// --------------------
 		float currentFrame = glfwGetTime();
 		deltaTime = currentFrame - lastFrame;
 		lastFrame = currentFrame;
 
-		// Start the Dear ImGui frame
-		ImGui_ImplOpenGL3_NewFrame();
-		ImGui_ImplGlfw_NewFrame();
-		ImGui::NewFrame();
-
-		ImGui::Begin("Settting");
-		ImGui::SliderFloat3("lightDir", lightDir, -1, 1);
-		ImGui::End();
+		const float RANGE_START = -400.0f;
+		const float RANGE_END = 400.0f;
 
 		// input
 		// -----
 		processInput(window);
+		changePlaneInitAng(0, 0, true);
+		changePlanePos();
+		sceneController.sceneChangeDetector();
 
 		// render
 		// ------
 		glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-		// be sure to activate shader when setting uniforms/drawing objects
-		shader.use();
-		shader.setVec3("light.direction", lightDir[0], lightDir[1], lightDir[2]);
-		shader.setVec3("viewPos", camera.Position);
+		//get lightSpaceMatrix
+		glm::mat4 lightProjection, lightView;
+		glm::mat4 lightSpaceMatrix;
+		lightProjection = glm::ortho(-lightPan, lightPan, -lightPan, lightPan, 0.1f, lightPan);
+		lightView = glm::lookAt(glm::vec3(lightPos[0], lightPos[1], lightPos[2]),
+								glm::vec3(0.0f), glm::vec3(0.0, 1.0, 0.0));
+		lightSpaceMatrix = lightProjection * lightView;
 
-		shader.setVec3("light.ambient", 0.4f, 0.4f, 0.4f);
-		shader.setVec3("light.diffuse", 0.8f, 0.8f, 0.8f);
-		shader.setVec3("light.specular", 1.0f, 1.0f, 1.0f);
+		// 1. render depth of scene to texture (from light's perspective)
+		// --------------------------------------------------------------
+		getDepthMap(depthShader, currentFrame, lightSpaceMatrix);
+		
+		skyBox.Draw();
+		// 2. render scene as normal using the generated depth/shadow map  
+		// --------------------------------------------------------------
+		showScence(shader, currentFrame, lightSpaceMatrix);
 
-		// view/projection transformations
-		glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 10000.0f);
-		glm::mat4 view = camera.GetViewMatrix();
-		shader.setMat4("projection", projection);
-		shader.setMat4("view", view);
+		showParticle(particleShader);
 
-		shader.setFloat("material.shininess", 32.0f);
+		skyBox.Draw();
 
-		double time = glfwGetTime();
+		if (isDepthTest) showDepthMap(debugDepthQuad);
+    
+ #ifdef IMGUI_TEST
+		showGui();
+ #endif // IMGUI_TEST
 
-		for (auto chara : allCharacters) {
-			chara->Draw(shader, static_cast<float>(time));
-		}
-
-		ImGui::Render();
-		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 		// glfw: swap buffers and poll IO events (keys pressed/released, mouse moved etc.)
 		// -------------------------------------------------------------------------------
 		glfwSwapBuffers(window);
 		glfwPollEvents();
 	}
-
-
+  
 	// glfw: terminate, clearing all previously allocated GLFW resources.
 	// ------------------------------------------------------------------
 	glfwTerminate();
@@ -185,14 +225,59 @@ void processInput(GLFWwindow *window)
 	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
 		glfwSetWindowShouldClose(window, true);
 
-	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
 		camera.ProcessKeyboard(FORWARD, deltaTime);
-	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+		sceneController.setThisFramePressed('W');
+	}
+	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
 		camera.ProcessKeyboard(BACKWARD, deltaTime);
-	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+		sceneController.setThisFramePressed('S');
+	}
+	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
 		camera.ProcessKeyboard(LEFT, deltaTime);
-	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+		sceneController.setThisFramePressed('A');
+	}
+	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
 		camera.ProcessKeyboard(RIGHT, deltaTime);
+		sceneController.setThisFramePressed('D');
+	}
+
+	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS ||
+		glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS ||
+		glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS ||
+		glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
+	}
+
+	if (glfwGetKey(window, GLFW_KEY_G) == GLFW_PRESS && !gammaKeyPressed)
+	{
+		gammaEnabled = !gammaEnabled;
+		gammaKeyPressed = true;
+	}
+	if (glfwGetKey(window, GLFW_KEY_G) == GLFW_RELEASE)
+	{
+		gammaKeyPressed = false;
+	}
+
+	if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS && !depthTestKeyPressed)
+	{
+		isDepthTest = !isDepthTest;
+		depthTestKeyPressed = true;
+	}
+	if (glfwGetKey(window, GLFW_KEY_T) == GLFW_RELEASE)
+	{
+		depthTestKeyPressed = false;
+	}
+
+	if (glfwGetKey(window, GLFW_KEY_O) == GLFW_PRESS)
+	{
+		glEnable(GL_MULTISAMPLE);
+	}
+	
+	if (glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS)
+	{
+		glDisable(GL_MULTISAMPLE);
+	}
+
 
 	if (glfwGetKey(window, GLFW_KEY_F1) == GLFW_PRESS) {
 		glfwSetCursorPosCallback(window, NULL);
@@ -234,6 +319,7 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 	lastX = xpos;
 	lastY = ypos;
 
+	changePlaneInitAng(xoffset, yoffset);
 	camera.ProcessMouseMovement(xoffset, yoffset);
 }
 
@@ -242,4 +328,163 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
 {
 	camera.ProcessMouseScroll(yoffset);
+}
+
+void showGui() {
+	// Start the Dear ImGui frame
+	ImGui_ImplOpenGL3_NewFrame();
+	ImGui_ImplGlfw_NewFrame();
+	ImGui::NewFrame();
+
+	ImGui::Begin("Settting");
+	ImGui::SliderFloat3("lightPos", lightPos, -500, 500);
+	//ImGui::InputFloat3("lightPos", lightPos, 2);
+	ImGui::InputFloat("lightPan", &lightPan, 2);
+	//ImGui::SliderFloat3("planePos", (float*)&(sceneController.viewPlane->position), -10, 10);
+	ImGui::SliderFloat3("planeRota", (float*)&(sceneController.viewPlane->angles), 0, 360);
+	ImGui::SliderFloat3("planeRota", (float*)&(viewPlaneInitAng), 0, 360);
+	
+	/*ImGui::SliderFloat3("planeScale", (float*)&(sceneController.viewPlane->scale), 0, 10);
+	ImGui::SliderFloat3("blackPos", (float*)&(sceneController.forwardBlackHole->position), RANGE_START, RANGE_END);
+	ImGui::SliderFloat3("blackRota", (float*)&(sceneController.forwardBlackHole->angles), 0, 360);
+	ImGui::SliderFloat3("blackScale", (float*)&(sceneController.forwardBlackHole->scale), 0, 10);
+	ImGui::SliderFloat("sencer", &(sceneController.blackHoleSensitivity), RANGE_START, RANGE_END);*/
+	ImGui::End();
+	ImGui::Render();
+	ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+}
+
+void changePlanePos() {
+	sceneController.viewPlane->position.x = camera.Position.x + 10 * camera.Front.x;
+	sceneController.viewPlane->position.y = camera.Position.y + 10 * camera.Front.y;
+	sceneController.viewPlane->position.z = camera.Position.z + 10 * camera.Front.z;
+	sceneController.viewPlane->angles.x = viewPlaneInitAng.x + camera.Pitch;
+	sceneController.viewPlane->angles.y = viewPlaneInitAng.y - 90 - camera.Yaw;
+}
+
+void changePlaneInitAng(float xoffset, float yoffset, bool reset) {
+	if (reset) {
+		if (!isFloatEqual(viewPlaneInitAng.x, defaultViewPlaneInitAng[0]))
+			viewPlaneInitAng.x += viewPlaneInitAng.x < defaultViewPlaneInitAng[0] ? 1 : -1;
+		if (!isFloatEqual(viewPlaneInitAng.y, defaultViewPlaneInitAng[1]))
+			viewPlaneInitAng.y += viewPlaneInitAng.y < defaultViewPlaneInitAng[1] ? 1 : -1;
+	}
+
+	else {
+		if (yoffset < 0) {
+			if (viewPlaneInitAng.x > defaultViewPlaneInitAng[0] - 25.0f)
+				viewPlaneInitAng.x -= 2;
+		}
+		else if (yoffset > 0) {
+			if (viewPlaneInitAng.x < defaultViewPlaneInitAng[0] + 15.0f)
+				viewPlaneInitAng.x += 2;
+		}
+
+		if (xoffset > 0) {
+			if (viewPlaneInitAng.y > defaultViewPlaneInitAng[1]- 25.0f)
+				viewPlaneInitAng.y -= 2;
+		}
+		else if (xoffset < 0) {
+			if (viewPlaneInitAng.y < defaultViewPlaneInitAng[1] + 25.0f)
+				viewPlaneInitAng.y += 2;
+		}
+	}
+}
+
+void getDepthMap(Shader &depthShader, float &currentFrame, glm::mat4 &lightSpaceMatrix) {
+	depthShader.use();
+	depthShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
+
+	glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
+	glBindFramebuffer(GL_FRAMEBUFFER, sceneController.depthMapFBO);
+	glClear(GL_DEPTH_BUFFER_BIT);
+	sceneController.Draw(depthShader, currentFrame);
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	// reset viewport
+	glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+}
+
+void showScence(Shader &shader, float &currentFrame, glm::mat4 &lightSpaceMatrix) {
+	shader.use();
+	shader.setInt("gamma", gammaEnabled);
+	shader.setInt("shadowMap", 0);
+	shader.setVec3("light.direction", -lightPos[0], -lightPos[1], -lightPos[2]);
+	shader.setVec3("viewPos", camera.Position);
+
+	shader.setVec3("light.ambient", 0.5f, 0.5f, 0.5f);
+	shader.setVec3("light.diffuse", 1.0f, 1.0f, 1.0f);
+	shader.setVec3("light.specular", 1.0f, 1.0f, 1.0f);
+
+	// view/projection transformations
+	glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 10000.0f);
+	glm::mat4 view = camera.GetViewMatrix();
+	shader.setMat4("projection", projection);
+	shader.setMat4("view", view);
+	shader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
+
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, sceneController.depthMap);
+	sceneController.Draw(shader, currentFrame);
+
+	//FontRender::getInstance()->RenderCharacter('W', 25.0f, 25.0f, 1.0f, glm::vec3(1.0f, 0.0f, 0.0f));
+}
+
+void showDepthMap(Shader &debugDepthQuad) {
+	debugDepthQuad.use();
+	debugDepthQuad.setInt("depthMap", 0);
+	debugDepthQuad.setFloat("near_plane", 0.1f);
+	debugDepthQuad.setFloat("far_plane", lightPan);
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, sceneController.depthMap);
+	renderQuad();
+}
+
+// renderQuad() renders a 1x1 XY quad in NDC
+// -----------------------------------------
+unsigned int quadVAO = 0;
+unsigned int quadVBO;
+void renderQuad()
+{
+	if (quadVAO == 0)
+	{
+		float quadVertices[] = {
+			// positions        // texture Coords
+			-1.0f,  1.0f, 0.0f, 0.0f, 1.0f,
+			-1.0f, -1.0f, 0.0f, 0.0f, 0.0f,
+			 1.0f,  1.0f, 0.0f, 1.0f, 1.0f,
+			 1.0f, -1.0f, 0.0f, 1.0f, 0.0f,
+		};
+		// setup plane VAO
+		glGenVertexArrays(1, &quadVAO);
+		glGenBuffers(1, &quadVBO);
+		glBindVertexArray(quadVAO);
+		glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
+		glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), &quadVertices, GL_STATIC_DRAW);
+		glEnableVertexAttribArray(0);
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+		glEnableVertexAttribArray(1);
+		glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+	}
+	glBindVertexArray(quadVAO);
+	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+	glBindVertexArray(0);
+}
+
+void showParticle(Shader &shader) {
+	shader.use();
+	glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 10000.0f);
+	glm::mat4 view = camera.GetViewMatrix();
+	shader.setMat4("projection", projection);
+	shader.setMat4("view", view);
+	shader.setFloat("scale", 10.0f);
+	if (sceneController.isForwardShow) {
+		Particles->Update(0.01, *(sceneController.forwardBlackHole), 5, glm::vec3(0.0f));
+	}
+	else if (sceneController.isBackwardShow) {
+		Particles->Update(0.01, *(sceneController.backwardBlackHole), 5, glm::vec3(0.0f));
+	}
+	Particles->Draw();
 }

@@ -26,10 +26,24 @@
 #include <vector>
 #include <string.h>
 #include <assert.h>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 typedef int uint;
 using namespace std;
 
+
+extern unsigned int SCR_WIDTH;
+extern unsigned int SCR_HEIGHT;
+extern const unsigned int SHADOW_WIDTH;
+extern const unsigned int SHADOW_HEIGHT;
+bool isFloatEqual(float a, float b);
+
+#define DISALLOW_COPY_AND_ASSIGN(classname) \
+private:                                   \
+    classname(const classname &);             \
+    classname &operator=(const classname &);
 
 #define OGLDEV_ERROR0(msg) OgldevError(__FILE__, __LINE__, msg)
 #define OGLDEV_ERROR(msg, ...) OgldevError(__FILE__, __LINE__, msg, __VA_ARGS__)
@@ -73,6 +87,8 @@ using namespace std;
 #define GLCheckError() (glGetError() == GL_NO_ERROR)
 
 #define ASSIMP_LOAD_FLAGS (aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_FlipUVs | aiProcess_JoinIdenticalVertices)
+
+float distanceOfPositions(const glm::vec3 pos1, const glm::vec3 pos2);
 
 #endif	/* OGLDEV_UTIL_H */
 

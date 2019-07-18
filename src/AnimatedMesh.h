@@ -56,7 +56,11 @@ struct Vertex {
 	}
 
 	void normalizeBoneWeight() {
-		assert(0);
+		float totalWeight = boneWeight.x + boneWeight.y + boneWeight.z + boneWeight.w;
+		boneWeight.x = boneWeight.x / totalWeight;
+		boneWeight.y = boneWeight.y / totalWeight;
+		boneWeight.z = boneWeight.z / totalWeight;
+		boneWeight.w = boneWeight.w / totalWeight;
 	}
 
 
@@ -69,6 +73,8 @@ struct Material {
 	glm::vec4 Kd;
 	//镜反射
 	glm::vec4 Ks;
+	//漫反射指数
+	float Ni;
 };
 
 
@@ -97,7 +103,7 @@ public:
 		shader.setVec3("material.ambient", mats.Ka.x, mats.Ka.y, mats.Ka.z);
 		shader.setVec3("material.diffuse", mats.Kd.x, mats.Kd.y, mats.Kd.z);
 		shader.setVec3("material.specular", mats.Ks.x, mats.Ks.y, mats.Ks.z); // specular lighting doesn't have full effect on this object's material
-
+		shader.setFloat("material.shininess", mats.Ni);
 
 		// draw mesh
 		glBindVertexArray(VAO);
